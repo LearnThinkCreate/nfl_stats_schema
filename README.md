@@ -93,7 +93,7 @@ Each level has a companion view that adds derived metrics without modifying the 
 - **player_season_stats_with_metrics**: Adds per-season derived metrics
 - **player_career_stats_with_metrics**: Adds career-level derived metrics
 
-This separation allows for efficient calculation of the base aggregations while moving derived calculations to a separate step, optimizing both write and read operations.
+This separation allows for efficient calculation of the base aggregations while moving derived calculations to a separate step, optimizing read operations.
 
 ## Partitioning Strategy
 
