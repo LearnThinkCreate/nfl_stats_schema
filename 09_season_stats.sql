@@ -56,6 +56,8 @@ SELECT
     
     -- QB specific stats
     SUM(scrambles) AS scrambles,
+    SUM(scramble_yards) AS scramble_yards,
+    SUM(scramble_first_downs) AS scramble_first_downs,
     
     -- QB-specific air yards stats for ADOT calculation
     SUM(qb_targets) AS qb_targets,
@@ -63,7 +65,14 @@ SELECT
     
     -- Advanced usage stats
     SUM(dropbacks) AS dropbacks,
-    SUM(passing_cpoe) AS passing_cpoe,
+    SUM(total_cpoe) AS total_cpoe,
+    SUM(cpoe_count) as cpoe_count,
+
+    -- Explosive stats
+    SUM(explosive_passes) AS explosive_passes,
+    SUM(explosive_runs) AS explosive_runs,
+    SUM(explosive_receptions) AS explosive_receptions,
+    SUM(explosive_scrambles) AS explosive_scrambles,
     
     -- Touches and opportunities totals
     SUM(touches) AS touches,
@@ -139,7 +148,7 @@ SELECT
     END AS int_percentage,
     
     CASE 
-        WHEN (attempts + sacks) > 0 THEN ROUND((sacks::numeric / (attempts + sacks)) * 100, 1)
+        WHEN dropbacks > 0 THEN ROUND((sacks::numeric / dropbacks) * 100, 1)
         ELSE NULL
     END AS sack_rate,
     
@@ -148,7 +157,7 @@ SELECT
         ELSE NULL
     END AS scramble_rate,
 
-    CASE WHEN passes > 0 THEN ROUND((passing_cpoe::numeric / passes) * 100, 1) ELSE NULL END AS cpoe,
+    CASE WHEN cpoe_count > 0 THEN ROUND((total_cpoe::numeric / cpoe_count::numeric), 1) ELSE NULL END AS cpoe,
     
     -- ADOT metrics for QBs and receivers
     CASE 
@@ -200,6 +209,8 @@ SELECT
     END AS wopr,
     
     -- Success rates
+    CASE WHEN qb_plays > 0 THEN ROUND(((successful_passes::numeric + successful_rushes::numeric) / qb_plays) * 100, 1) ELSE NULL END AS success_rate,
+
     CASE WHEN passes > 0 THEN ROUND((successful_passes::numeric / passes) * 100, 1) ELSE NULL END AS passing_success_rate,
     
     CASE WHEN dropbacks > 0 THEN ROUND((successful_dropbacks::numeric / dropbacks) * 100, 1) ELSE NULL END AS dropback_success_rate,
@@ -210,20 +221,23 @@ SELECT
 
     CASE WHEN targets > 0 THEN ROUND((successful_receptions::numeric / targets) * 100, 1) ELSE NULL END AS target_success_rate,
     
+    
     -- EPA per play metrics
-    CASE WHEN dropbacks > 0 THEN ROUND(dropback_epa::numeric / dropbacks, 2) ELSE NULL END AS epa_per_dropback,
+    CASE WHEN dropbacks > 0 THEN ROUND(dropback_epa::numeric / dropbacks, 3) ELSE NULL END AS epa_per_dropback,
     
-    CASE WHEN scrambles > 0 THEN ROUND(scramble_epa::numeric / scrambles, 2) ELSE NULL END AS epa_per_scramble,
+    CASE WHEN scrambles > 0 THEN ROUND(scramble_epa::numeric / scrambles, 3) ELSE NULL END AS epa_per_scramble,
     
-    CASE WHEN carries > 0 THEN ROUND(rushing_epa::numeric / carries, 2) ELSE NULL END AS epa_per_carry,
+    CASE WHEN carries > 0 THEN ROUND(rushing_epa::numeric / carries, 3) ELSE NULL END AS epa_per_carry,
     
-    CASE WHEN targets > 0 THEN ROUND(receiving_epa::numeric / targets, 2) ELSE NULL END AS epa_per_target,
+    CASE WHEN targets > 0 THEN ROUND(receiving_epa::numeric / targets, 3) ELSE NULL END AS epa_per_target,
     
-    CASE WHEN receptions > 0 THEN ROUND(receiving_epa::numeric / receptions, 2) ELSE NULL END AS epa_per_reception,
+    CASE WHEN receptions > 0 THEN ROUND(receiving_epa::numeric / receptions, 3) ELSE NULL END AS epa_per_reception,
     
-    CASE WHEN plays > 0 THEN ROUND(total_epa::numeric / plays, 2) ELSE NULL END AS epa_per_play,
+    CASE WHEN plays > 0 THEN ROUND(total_epa::numeric / plays, 3) ELSE NULL END AS epa_per_play,
 
-    CASE WHEN qb_plays > 0 THEN ROUND((passing_epa + rushing_epa)::numeric / qb_plays, 2) ELSE NULL END AS epa_per_qb_play,
+    CASE WHEN qb_plays > 0 THEN ROUND((passing_epa + rushing_epa)::numeric / qb_plays, 3) ELSE NULL END AS epa_per_qb_play,
+
+    CASE WHEN passes > 0 THEN ROUND(passing_epa::numeric / passes, 3) ELSE NULL END AS epa_per_pass,
     
     -- Total offensive stats
     (passing_yards + rushing_yards + receiving_yards) AS total_yards,
@@ -232,7 +246,7 @@ SELECT
     
     -- QB passer rating (traditional formula)
     CASE 
-        WHEN attempts >= 10 THEN
+        WHEN attempts >= 1 THEN
             ROUND(
                 ((
                     ((completions::numeric / attempts) * 100 - 30) / 20 +
@@ -249,7 +263,23 @@ SELECT
     
     CASE WHEN carries > 0 THEN ROUND((rushing_first_downs::numeric / carries) * 100, 1) ELSE NULL END AS rushing_first_down_rate,
     
-    CASE WHEN targets > 0 THEN ROUND((receiving_first_downs::numeric / targets) * 100, 1) ELSE NULL END AS receiving_first_down_rate
+    CASE WHEN targets > 0 THEN ROUND((receiving_first_downs::numeric / targets) * 100, 1) ELSE NULL END AS receiving_first_down_rate,
+
+    CASE WHEN scrambles > 0 THEN ROUND((scramble_first_downs::numeric / scrambles) * 100, 1) ELSE NULL END AS scramble_first_down_rate,
+
+    -- explosive rates
+    CASE WHEN passes > 0 THEN ROUND((explosive_passes::numeric / passes) * 100, 1) ELSE NULL END AS explosive_pass_rate,
+
+    CASE WHEN carries > 0 THEN ROUND((explosive_runs::numeric / carries) * 100, 1) ELSE NULL END AS explosive_run_rate,
+
+    CASE WHEN targets > 0 THEN ROUND((explosive_receptions::numeric / targets) * 100, 1) ELSE NULL END AS explosive_target_rate,
+
+    CASE WHEN receptions > 0 THEN ROUND((explosive_receptions::numeric / receptions) * 100, 1) ELSE NULL END AS explosive_catch_rate,
+
+    CASE WHEN scrambles > 0 THEN ROUND((explosive_scrambles::numeric / scrambles) * 100, 1) ELSE NULL END AS explosive_scramble_rate
+    
+    
+
 FROM 
     player_season_stats ps;
 

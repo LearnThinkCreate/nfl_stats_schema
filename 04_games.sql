@@ -17,7 +17,7 @@ CREATE TABLE games (
     total INTEGER,                               -- Total points scored in the game
     overtime INTEGER,                            -- Binary indicator if the game went to overtime (1) or not (0)
     gsis INTEGER,                                -- NFL GameStats and Information System ID
-    nfl_detail_id FLOAT,                         -- NFL API detail identifier
+    nfl_detail_id VARCHAR(50),                         -- NFL API detail identifier
     pfr VARCHAR(50),                             -- Pro Football Reference game identifier
     pff INTEGER,                                   -- Pro Football Focus game identifier
     espn INTEGER,                                -- ESPN game identifier

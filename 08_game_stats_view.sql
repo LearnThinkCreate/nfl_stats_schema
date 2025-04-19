@@ -54,7 +54,13 @@ WITH playstats_agg AS (
         SUM(ps.rush_yards) AS rushing_yards,
         SUM(ps.rec_yards) AS receiving_yards,
         SUM(ps.yac) AS receiving_yards_after_catch,
-        
+
+        -- Explosive Stats
+        SUM(CASE WHEN ps.pass_yards >= 20 THEN 1 ELSE 0 END) AS explosive_passes,
+        SUM(CASE WHEN ps.rush_yards > 10 THEN 1 ELSE 0 END) AS explosive_runs,
+        SUM(CASE WHEN ps.rec_yards >= 20 THEN 1 ELSE 0 END) AS explosive_receptions,
+        SUM(CASE WHEN ps.rush_yards >= 20 THEN 1 ELSE 0 END) AS explosive_scrambles,
+
         -- Special handling for receiving air yards (as in Python code)
         SUM(CASE WHEN ps.is_target THEN ps.team_play_air_yards ELSE 0 END) AS receiving_air_yards,
         
@@ -67,10 +73,15 @@ WITH playstats_agg AS (
         MAX(ps.season_type) AS season_type,
         
         -- Determine opponent team
-        MAX(CASE 
-            WHEN ps.team = ps.off THEN ps.def
-            ELSE ps.off
-        END) AS opponent_team
+        MAX(
+            NULLIF(
+                CASE 
+                    WHEN ps.team = ps.off THEN ps.def
+                    ELSE ps.off
+                END, 
+                'NaN'
+            )
+        ) AS opponent_team
     FROM
         playstats ps
     JOIN
@@ -97,11 +108,11 @@ passing_stats AS (
         p.season,
         p.week,
         p.game_id,
-        p.posteam AS team,
         p.passer_player_id AS player_id,
         SUM(p.qb_epa) AS passing_epa,
         -- Use AVG with NULL handling to match Python's np.mean behavior
         AVG(NULLIF(p.cpoe, 'NaN')) AS passing_cpoe,
+        COUNT(NULLIF(p.cpoe, 'NAN')) as cpoe_count,
         SUM(NULLIF(p.cpoe, 'NaN')) AS total_cpoe,
         SUM(NULLIF(p.success::float, 'NaN')) AS successful_passes,
         COUNT(p.passer_player_id) AS passes
@@ -111,7 +122,7 @@ passing_stats AS (
         p.play_type IN ('pass', 'qb_spike')
         AND p.passer_player_id IS NOT NULL
     GROUP BY
-        p.season, p.week, p.game_id, p.posteam, p.passer_player_id
+        p.season, p.week, p.game_id, p.passer_player_id
 ),
 
 -- 2. Rushing stats (matches get_rushing_stats function)
@@ -120,7 +131,6 @@ rushing_stats AS (
         p.season,
         p.week,
         p.game_id,
-        p.posteam AS team,
         p.rusher_player_id AS player_id,
         SUM(p.epa) AS rushing_epa,
         SUM(NULLIF(p.success::float, 'NaN')) AS successful_rushes
@@ -130,7 +140,7 @@ rushing_stats AS (
         p.play_type IN ('run', 'qb_kneel')
         AND p.rusher_player_id IS NOT NULL
     GROUP BY
-        p.season, p.week, p.game_id, p.posteam, p.rusher_player_id
+        p.season, p.week, p.game_id, p.rusher_player_id
 ),
 
 -- 3. Receiving stats (matches get_receiving_stats function)
@@ -139,7 +149,6 @@ receiving_stats AS (
         p.season,
         p.week,
         p.game_id,
-        p.posteam AS team,
         p.receiver_player_id AS player_id,
         SUM(p.epa) AS receiving_epa,
         SUM(NULLIF(p.success::float, 'NaN')) AS successful_receptions
@@ -148,7 +157,7 @@ receiving_stats AS (
     WHERE
         p.receiver_player_id IS NOT NULL
     GROUP BY
-        p.season, p.week, p.game_id, p.posteam, p.receiver_player_id
+        p.season, p.week, p.game_id, p.receiver_player_id
 ),
 
 -- 4. Dropback stats (matches get_dropback_stats function)
@@ -157,7 +166,6 @@ dropback_stats AS (
         p.season,
         p.week,
         p.game_id,
-        p.posteam AS team,
         -- Determine player_id based on scramble flag, exactly as in Python
         CASE WHEN p.qb_scramble = 1 THEN p.rusher_player_id ELSE p.passer_player_id END AS player_id,
         COUNT(*) AS dropbacks,
@@ -173,7 +181,7 @@ dropback_stats AS (
             (p.passer_player_id IS NOT NULL)
         )
     GROUP BY
-        p.season, p.week, p.game_id, p.posteam,
+        p.season, p.week, p.game_id,
         CASE WHEN p.qb_scramble = 1 THEN p.rusher_player_id ELSE p.passer_player_id END
 ),
 
@@ -183,18 +191,19 @@ scramble_stats AS (
         p.season,
         p.week,
         p.game_id,
-        p.posteam AS team,
         p.rusher_player_id AS player_id,
         COUNT(*) AS scrambles,
         SUM(p.qb_epa) AS scramble_epa,
-        SUM(NULLIF(p.success::float, 'NaN')) AS successful_scrambles
+        SUM(p.rushing_yards) AS scramble_yards,
+        SUM(NULLIF(p.success::float, 'NaN')) AS successful_scrambles,
+        SUM(CASE WHEN p.first_down_rush = 1 THEN 1 ELSE 0 END) AS scramble_first_downs
     FROM
         plays p
     WHERE
         p.qb_scramble = 1
         AND p.rusher_player_id IS NOT NULL
     GROUP BY
-        p.season, p.week, p.game_id, p.posteam, p.rusher_player_id
+        p.season, p.week, p.game_id, p.rusher_player_id
 )
 
 -- Final query that merges all CTEs
@@ -204,8 +213,9 @@ SELECT
     pa.season,
     pa.week,
     pa.player_id,
-    pa.player_name,
+    COALESCE(p.short_name, pa.player_name) AS player_name,
     pa.team,
+    case when pa.team = g.home_team then 'home' else 'away' end as home_away,
     pa.season_type,
     pa.opponent_team,
     pa.position,
@@ -225,7 +235,6 @@ SELECT
     pa.sack_yards,
     pa.passing_air_yards,
     pa.passing_first_downs,
-    COALESCE(ps.passing_cpoe, 0) AS passing_cpoe,
     COALESCE(ps.passing_cpoe, 0) AS cpoe,
     COALESCE(ps.passes, 0) AS passes,
     -- QB-specific air yards stats for ADOT
@@ -238,6 +247,7 @@ SELECT
     COALESCE(ps.passing_epa, 0) AS passing_epa,
     COALESCE(ps.successful_passes, 0) AS successful_passes,
     COALESCE(ps.total_cpoe, 0) AS total_cpoe,
+    COALESCE(ps.cpoe_count, 0) AS cpoe_count,
     
     -- Dropback stats
     COALESCE(ds.dropbacks, 0) AS dropbacks,
@@ -247,7 +257,9 @@ SELECT
     -- Scramble stats
     COALESCE(ss.scrambles, 0) AS scrambles,
     COALESCE(ss.scramble_epa, 0) AS scramble_epa,
+    COALESCE(ss.scramble_yards, 0) AS scramble_yards,
     COALESCE(ss.successful_scrambles, 0) AS successful_scrambles,
+    COALESCE(ss.scramble_first_downs, 0) AS scramble_first_downs,
     
     -- Rushing stats
     pa.carries,
@@ -268,6 +280,12 @@ SELECT
     COALESCE(recs.receiving_epa, 0) AS receiving_epa,
     COALESCE(recs.successful_receptions, 0) AS successful_receptions,
     
+    -- Explosive stats
+    pa.explosive_passes,
+    pa.explosive_runs,
+    pa.explosive_receptions,
+    pa.explosive_scrambles,
+
     -- Ball protection stats
     pa.sack_fumbles,
     pa.sack_fumbles_lost,
@@ -305,6 +323,17 @@ LEFT JOIN
     dropback_stats ds ON pa.player_id = ds.player_id AND pa.game_id = ds.game_id
 LEFT JOIN
     scramble_stats ss ON pa.player_id = ss.player_id AND pa.game_id = ss.game_id
+LEFT JOIN
+    (
+        select
+            game_id,
+            home_team,
+            away_team
+        from
+            games
+    ) g ON pa.game_id = g.game_id
+LEFT JOIN
+    players p ON pa.player_id = p.gsis_id
 WITH DATA;
 
 -- Add derived metrics as a separate step
@@ -392,6 +421,11 @@ SELECT
     END AS wopr,
     
     -- Success rates
+    CASE
+        WHEN qb_plays > 0 THEN ROUND(((successful_passes::numeric + successful_rushes::numeric) / qb_plays) * 100, 1)
+        ELSE NULL
+    END AS success_rate,
+
     CASE 
         WHEN passes > 0 THEN ROUND((successful_passes::numeric / passes) * 100, 1)
         ELSE NULL
@@ -438,6 +472,11 @@ SELECT
         WHEN qb_plays > 0 THEN ROUND((passing_epa + rushing_epa)::numeric / qb_plays, 2)
         ELSE NULL
     END AS epa_per_qb_play,
+
+    CASE
+        WHEN passes > 0 THEN ROUND(passing_epa::numeric / passes, 2)
+        ELSE NULL
+    END AS epa_per_pass,
     
     CASE 
         WHEN carries > 0 THEN ROUND(rushing_epa::numeric / carries, 2)
@@ -448,7 +487,33 @@ SELECT
         WHEN targets > 0 THEN ROUND(receiving_epa::numeric / targets, 2)
         ELSE NULL
     END AS epa_per_target,
+
+    -- Explosive rates
+    CASE
+        WHEN passes > 0 THEN ROUND((explosive_passes::numeric / passes) * 100, 1)
+        ELSE NULL
+    END AS explosive_pass_rate,
     
+    CASE
+        WHEN carries > 0 THEN ROUND((explosive_runs::numeric / carries) * 100, 1)
+        ELSE NULL
+    END AS explosive_run_rate,
+    
+    CASE
+        WHEN targets > 0 THEN ROUND((explosive_receptions::numeric / targets) * 100, 1)
+        ELSE NULL
+    END AS explosive_target_rate,
+
+    CASE
+        WHEN receptions > 0 THEN ROUND((explosive_receptions::numeric / receptions) * 100, 1)
+        ELSE NULL
+    END AS explosive_catch_rate,
+
+    CASE
+        WHEN scrambles > 0 THEN ROUND((explosive_scrambles::numeric / scrambles) * 100, 1)
+        ELSE NULL
+    END AS explosive_scramble_rate,
+
     -- Total offensive stats
     (passing_yards + rushing_yards + receiving_yards) AS total_yards,
     (passing_tds + rushing_tds + receiving_tds) AS total_touchdowns,
@@ -489,6 +554,11 @@ SELECT
         targets > 0 then ROUND((receiving_first_downs::numeric / targets) * 100, 1)
         ELSE NULL
     END AS receiving_first_down_rate,
+    -- scramble first down rate
+    case when
+        scrambles > 0 then ROUND((scramble_first_downs::numeric / scrambles) * 100, 1)
+        ELSE NULL
+    END AS scramble_first_down_rate,
     case when
         targets > 0 then ROUND(passing_yards::numeric / targets, 1)
         ELSE NULL

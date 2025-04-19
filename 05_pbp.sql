@@ -64,13 +64,13 @@ CREATE TABLE plays (
     rush_touchdown FLOAT,                 -- Binary: rush touchdown
     
     -- Player information
-    passer_player_id VARCHAR(50) REFERENCES players(gsis_id),
+    passer_player_id VARCHAR(50),
     passer_player_name VARCHAR(100),
     passing_yards FLOAT,
-    rusher_player_id VARCHAR(50) REFERENCES players(gsis_id),
+    rusher_player_id VARCHAR(50),
     rusher_player_name VARCHAR(100),
     rushing_yards FLOAT,
-    receiver_player_id VARCHAR(50) REFERENCES players(gsis_id),
+    receiver_player_id VARCHAR(50),
     receiver_player_name VARCHAR(100),
     receiving_yards FLOAT,
     

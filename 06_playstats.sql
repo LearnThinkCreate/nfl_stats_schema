@@ -92,26 +92,26 @@ CREATE TABLE playstats (
 ) PARTITION BY RANGE (season);
 
 -- Create partitions for past seasons programmatically
-DO $$
-DECLARE
-    year_val INTEGER;
-BEGIN
-    FOR year_val IN 1999..2023 LOOP
-        EXECUTE format('
-            CREATE TABLE playstats_%s PARTITION OF playstats
-            FOR VALUES FROM (%s) TO (%s)',
-            year_val, year_val, year_val + 1
-        );
-    END LOOP;
-END $$;
+-- DO $$
+-- DECLARE
+--     year_val INTEGER;
+-- BEGIN
+--     FOR year_val IN 1999..2023 LOOP
+--         EXECUTE format('
+--             CREATE TABLE playstats_%s PARTITION OF playstats
+--             FOR VALUES FROM (%s) TO (%s)',
+--             year_val, year_val, year_val + 1
+--         );
+--     END LOOP;
+-- END $$;
 
--- Create partition for current season (2024)
-CREATE TABLE playstats_2024 PARTITION OF playstats
-FOR VALUES FROM (2024) TO (2025);
+-- -- Create partition for current season (2024)
+-- CREATE TABLE playstats_2024 PARTITION OF playstats
+-- FOR VALUES FROM (2024) TO (2025);
 
--- Create partition for next season
-CREATE TABLE playstats_2025 PARTITION OF playstats
-FOR VALUES FROM (2025) TO (2026);
+-- -- Create partition for next season
+-- CREATE TABLE playstats_2025 PARTITION OF playstats
+-- FOR VALUES FROM (2025) TO (2026);
 
 -- Index on player_id: Supports filtering and joining with players
 CREATE INDEX idx_playstats_player_id ON playstats (player_id);
@@ -135,7 +135,7 @@ CREATE INDEX idx_playstats_is_likely_pass ON playstats (is_likely_pass);
 -- Season type index
 CREATE INDEX idx_playstats_season_type ON playstats (season_type);
 
--- Maintenance function to add new season partitions
+-- -- Maintenance function to add new season partitions
 CREATE OR REPLACE FUNCTION create_playstats_partition(p_season INTEGER)
 RETURNS VOID AS $$
 BEGIN
@@ -147,29 +147,29 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Add flags to playstats
-CREATE OR REPLACE FUNCTION update_playstats_from_plays_batch()
-RETURNS TRIGGER AS $$
-BEGIN
-    UPDATE playstats ps
-    SET is_leading = p.is_leading,
-        is_trailing = p.is_trailing,
-        is_red_zone = p.is_red_zone,
-        is_late_down = p.is_late_down,
-        is_likely_pass = p.is_likely_pass
-    FROM plays p
-    WHERE ps.play_id = p.play_id
-      AND ps.game_id = p.game_id
-      AND ps.season = p.season
-      AND (ps.play_id, ps.game_id, ps.season) IN (
-          SELECT play_id, game_id, season
-          FROM new_table
-      );
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
+-- -- Add flags to playstats
+-- CREATE OR REPLACE FUNCTION update_playstats_from_plays_batch()
+-- RETURNS TRIGGER AS $$
+-- BEGIN
+--     UPDATE playstats ps
+--     SET is_leading = p.is_leading,
+--         is_trailing = p.is_trailing,
+--         is_red_zone = p.is_red_zone,
+--         is_late_down = p.is_late_down,
+--         is_likely_pass = p.is_likely_pass
+--     FROM plays p
+--     WHERE ps.play_id = p.play_id
+--       AND ps.game_id = p.game_id
+--       AND ps.season = p.season
+--       AND (ps.play_id, ps.game_id, ps.season) IN (
+--           SELECT play_id, game_id, season
+--           FROM new_table
+--       );
+--     RETURN NULL;
+-- END;
+-- $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER playstats_after_insert_batch
-AFTER INSERT ON playstats
-REFERENCING NEW TABLE AS new_table
-FOR EACH STATEMENT EXECUTE FUNCTION update_playstats_from_plays_batch();
+-- CREATE TRIGGER playstats_after_insert_batch
+-- AFTER INSERT ON playstats
+-- REFERENCING NEW TABLE AS new_table
+-- FOR EACH STATEMENT EXECUTE FUNCTION update_playstats_from_plays_batch();
