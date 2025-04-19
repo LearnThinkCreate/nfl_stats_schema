@@ -26,9 +26,9 @@ SQL_FILES=(
   "08_game_stats_view.sql"
   "09_season_stats.sql"
   "10_career_stats.sql"
-  "11_func_get_filtered_stats.sql"
-  "12_refresh_functions.sql"
-  "13_optimization.sql"
+  "11_player_career_team.sql"
+  "12_player_relevance.sql"
+  "13_func_get_filtered_stats.sql"
 )
 
 # Create database if it doesn't exist
