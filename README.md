@@ -1,287 +1,84 @@
-# NFL Statistics Database Schema
+# NFL Statistics Database Project
 
-## Overview
+## Database Schema and Setup
 
-This repository contains a PostgreSQL database schema designed for storing and analyzing NFL statistics. The system is optimized for a read-heavy analytics workload supporting an NFL Analytics web application. It enables efficient querying of player, team, and game statistics across multiple seasons with sophisticated filtering capabilities.
+This section details the architecture, design principles, and setup process for the PostgreSQL database powering the NFL Statistics project. The schema is meticulously designed to support efficient storage, querying, and analysis of comprehensive NFL play-by-play and player data, showcasing expertise relevant to Data Engineer and Data Analyst roles.
 
-## Database Design Philosophy
+### Overview
 
-The database follows several core design principles:
+The database employs **PostgreSQL** and is structured around dimensional modeling principles, providing a robust foundation for analytical workloads. It houses detailed information on players, teams, games, and granular play-by-play statistics spanning multiple NFL seasons.
 
-1. **Progressive Data Refinement**: Data flows from raw play-by-play data to increasingly aggregated views (play → game → season → career)
-2. **Efficient Filtering**: Pre-computed flags in play-level tables support filtering by game situation (red zone, leading/trailing, etc.)
-3. **Read-Heavy Optimization**: Structure prioritizes fast analytical queries with appropriate denormalization where beneficial
-4. **Separation of Raw Data and Metrics**: Statistics views split into base aggregations and derived metrics for maintainability
+### Key Design Principles & Highlights
 
-## Schema Structure
+The schema design prioritizes performance, scalability, and analytical flexibility:
 
-```
-┌──────────┐     ┌──────────┐     ┌──────────┐
-│   Teams  │     │  Players │     │   Games  │
-└────┬─────┘     └────┬─────┘     └────┬─────┘
-     │                │                │
-     └────────────────┴────────────────┼────────────┐
-                                       │            │
-                                       ▼            ▼
-                                 ┌──────────┐  ┌──────────┐
-                                 │   Plays  │  │Snap Counts│
-                                 └────┬─────┘  └───────────┘
-                                      │
-                                      ▼
-                                ┌──────────┐
-                                │ PlayStats│
-                                └────┬─────┘
-                                     │
-                                     ▼
-                          ┌─────────────────────┐
-                          │ Player Game Stats   │ (Materialized View)
-                          └─────────┬───────────┘
-                                    │
-                   ┌────────────────┴────────────────┐
-                   │                                 │
-                   ▼                                 ▼
-      ┌─────────────────────┐           ┌─────────────────────┐
-      │Game Stats w/Metrics │           │    Season Stats     │ (View)
-      │      (View)         │           └─────────┬───────────┘
-      └─────────────────────┘                     │
-                                    ┌─────────────┴─────────────┐
-                                    │                           │
-                                    ▼                           ▼
-                        ┌─────────────────────┐      ┌─────────────────────┐
-                        │Season Stats w/Metrics│      │    Career Stats     │ (View)
-                        │      (View)          │      └─────────┬───────────┘
-                        └─────────────────────┘                 │
-                                                                ▼
-                                                     ┌─────────────────────┐
-                                                     │Career Stats w/Metrics│
-                                                     │      (View)          │
-                                                     └─────────────────────┘
-```
+1.  **Dimensional Modeling:** A clear distinction is maintained between:
+    *   **Dimension Tables:** `players`, `teams`, `games` store descriptive attributes.
+    *   **Fact Tables:** `plays` (play-by-play), `playstats` (player-specific stats per play), `snap_counts` store quantitative measures and events, linking back to dimensions.
 
-### Core Tables
+2.  **Efficient Partitioning:**
+    *   The largest fact tables (`plays`, `playstats`) are **partitioned by `season`** using PostgreSQL's declarative partitioning (RANGE).
+    *   **Benefit:** This significantly boosts query performance for season-specific analyses (a common use case) by allowing the query planner to scan only relevant partitions (partition pruning). It also simplifies data management (e.g., archiving or dropping old seasons).
+    *   Maintenance functions (`create_season_partition`, `create_playstats_partition`) are provided for seamless addition of new season partitions.
 
-#### 1. Reference Tables
+3.  **Strategic Use of Materialized Views:**
+    *   `player_game_stats`: A foundational **materialized view** aggregates granular play-level data (`plays`, `playstats`) into pre-computed game-level statistics for each player. This drastically speeds up queries for game, season, and career summaries.
+    *   `player_relevance`: An intelligent **materialized view** calculates a composite relevance score for each player based on weighted career and recent performance metrics. This enables highly efficient player sorting, searching, and ranking functionalities within applications using this database.
 
-- **teams**: Team information including identifiers, names, divisions, conferences, and branding
-- **players**: Player biographical information, positions, physical attributes, and team affiliations
+4.  **Layered Aggregation via Views:**
+    *   Building upon the `player_game_stats` materialized view, standard SQL **views** provide progressively higher levels of aggregation:
+        *   `player_season_stats`: Aggregates game stats to the season level.
+        *   `player_career_stats`: Aggregates season stats to the career level.
+    *   A `_with_metrics` view pattern is used at each aggregation level (e.g., `player_game_stats_with_metrics`) to calculate derived metrics (rates, percentages, EPA, shares, WOPR) separately, keeping the base aggregation logic clean and performant.
 
-#### 2. Game Information
+5.  **Comprehensive Indexing Strategy:**
+    *   Indexes are strategically applied throughout the schema to optimize various query patterns:
+        *   **Primary & Foreign Keys:** Ensure data integrity and join performance.
+        *   **Common Filters:** Indexes on `season`, `week`, `team_abbr`, `player_id`, `position`, `game_type`.
+        *   **Fuzzy Text Search:** GIN indexes using `pg_trgm` on `players.display_name`, `teams.team_name`, and concatenated player names in `plays` enable efficient partial and misspelled name searches.
+        *   **Partial Indexes:** Used effectively to index subsets of data (e.g., only 'Active' players, specific `play_type` values), minimizing index size and maximizing utility for targeted queries.
+        *   **Covering Indexes (`INCLUDE`):** Implemented where appropriate (e.g., on `plays`, `player_game_stats`) to enable index-only scans for certain queries, avoiding table heap access.
+        *   **Situational Flag Indexes:** Indexes on flags like `is_leading`, `is_red_zone`, `is_late_down` in `plays` and `playstats` accelerate filtering based on game context.
+        *   **Collation Support:** Demonstrated awareness of locale-specific sorting/comparison (`idx_players_name_collation`).
 
-- **games**: Game metadata including dates, teams, scores, weather, and stadium information
+6.  **Modularity and Maintainability:**
+    *   The schema is defined across logically separated and numbered SQL files ( `01_...` to `13_...`), facilitating understanding and sequential setup.
+    *   PL/pgSQL functions (`get_filtered_season_stats`, partition creation functions) encapsulate logic, enhancing reusability and maintainability.
 
-#### 3. Play-Level Data
+### Schema Components
 
-- **plays**: Play-by-play data with pre-computed metrics and situation flags (partitioned by season)
-- **playstats**: Player statistics at the play level with attribution, inherits situation flags (partitioned by season)
-- **snap_counts**: Player participation data for each play
+*   **Dimensions:** `teams`, `players`, `games`
+*   **Facts:** `plays` (partitioned), `playstats` (partitioned), `snap_counts`
+*   **Materialized Views:** `player_game_stats`, `player_relevance`
+*   **Standard Views:** `player_season_stats`, `player_career_stats`, `player_game_stats_with_metrics`, `player_season_stats_with_metrics`, `player_career_stats_with_metrics`, `player_career_team`
+*   **Functions:** `get_filtered_season_stats`, `create_season_partition`, `create_playstats_partition`
+*   **Extensions:** `pg_trgm`
 
-### Statistical Views and Materialized Views
+### Setup Instructions
 
-The schema uses a progressive refinement approach to statistics:
+1.  **Prerequisites:** Ensure PostgreSQL is installed and running. The `pg_trgm` extension is required.
+2.  **Initialization:** Execute the provided SQL files in numerical order (from `01_extensions.sql` to `13_func_get_filtered_stats.sql`) against your target database. A `setup_database.sh` script is typically used to automate this sequence:
+    ```bash
+    # Example (replace with actual credentials/database name)
+    # PGPASSWORD=yourpassword psql -h localhost -U youruser -d nfl_stats -f 01_extensions.sql
+    # PGPASSWORD=yourpassword psql -h localhost -U youruser -d nfl_stats -f 02_teams.sql
+    # ... and so on for all 13 files
+    # Or run the setup script:
+    # ./setup_database.sh <db_user> <db_name> <db_host>
+    ```
+3.  **Materialized View Refresh:** After initial data loading, the materialized views (`player_game_stats`, `player_relevance`) will need to be refreshed periodically to reflect new data:
+    ```sql
+    REFRESH MATERIALIZED VIEW player_game_stats;
+    REFRESH MATERIALIZED VIEW player_relevance;
+    ```
 
-1. **player_game_stats** (Materialized View): Aggregates play-level data to game-level statistics
-   - Feeds into both player_game_stats_with_metrics and player_season_stats
+### Demonstrated Skills
 
-2. **player_season_stats** (View): Aggregates game-level data from player_game_stats
-   - Feeds into both player_season_stats_with_metrics and player_career_stats
+This database schema demonstrates proficiency in:
 
-3. **player_career_stats** (View): Aggregates season-level data from player_season_stats
-   - Feeds into player_career_stats_with_metrics
-
-Each level has a companion view that adds derived metrics without modifying the base data:
-- **player_game_stats_with_metrics**: Adds per-game derived metrics
-- **player_season_stats_with_metrics**: Adds per-season derived metrics
-- **player_career_stats_with_metrics**: Adds career-level derived metrics
-
-This separation allows for efficient calculation of the base aggregations while moving derived calculations to a separate step, optimizing both write and read operations.
-
-## Partitioning Strategy
-
-Large fact tables are partitioned by season to improve query performance and maintenance:
-
-```sql
-CREATE TABLE plays (
-    -- columns
-    PRIMARY KEY (season, play_id, game_id)
-) PARTITION BY RANGE (season);
-
--- Create partitions for each season
-CREATE TABLE plays_2023 PARTITION OF plays
-FOR VALUES FROM (2023) TO (2024);
-```
-
-Benefits of this approach include:
-- Improved query performance for season-specific queries
-- Easier maintenance (old seasons can be compressed or archived)
-- More efficient index usage
-- Parallel query opportunities
-
-## Indexing Strategy
-
-The indexing strategy is tailored to the common query patterns of an NFL analytics application:
-
-### 1. Primary Identifiers
-```sql
--- Primary team identifier
-CREATE INDEX idx_teams_name_trgm ON teams USING GIN (team_name gin_trgm_ops);
-
--- Player name with trigram support for fuzzy search
-CREATE INDEX idx_players_display_name_trgm ON players USING GIN (display_name gin_trgm_ops);
-```
-
-### 2. Common Filter Dimensions
-```sql
--- Season and week filtering
-CREATE INDEX idx_games_season_week ON games(season, week, game_type);
-
--- Team-based game filtering
-CREATE INDEX idx_games_teams ON games(home_team, away_team);
-```
-
-### 3. UI-Specific Filtering Support
-```sql
--- Support for common UI filters
-CREATE INDEX idx_playstats_is_leading ON playstats (is_leading);
-CREATE INDEX idx_playstats_is_red_zone ON playstats (is_red_zone);
-CREATE INDEX idx_playstats_is_late_down ON playstats (is_late_down);
-```
-
-### 4. Player Performance Lookups
-```sql
--- Indexes to support player-specific stat lookups
-CREATE INDEX idx_plays_passer ON plays(passer_player_id) WHERE passer_player_id IS NOT NULL;
-CREATE INDEX idx_plays_rusher ON plays(rusher_player_id) WHERE rusher_player_id IS NOT NULL;
-CREATE INDEX idx_plays_receiver ON plays(receiver_player_id) WHERE receiver_player_id IS NOT NULL;
-```
-
-## Advanced Filtering Function
-
-The schema provides a powerful dynamic SQL function (`get_filtered_season_stats`) that supports filtering by game situation flags (red zone, leading/trailing, etc.) that aren't available in the aggregated season views:
-
-```sql
--- Example call to get QB red zone stats for 2023 regular season
-SELECT * FROM get_filtered_season_stats(
-    p_season => 2023,
-    p_is_red_zone => 1,
-    p_position => 'QB',
-    p_season_type => 'REG',
-    p_sort_column => 'completion_percentage',
-    p_sort_direction => 'DESC',
-    p_min_attempts => 20
-);
-```
-
-This function:
-1. Filters plays and playstats tables using situation flags (is_red_zone, is_leading, etc.)
-2. Aggregates statistics only for plays matching these criteria
-3. Allows for minimum thresholds (attempts, targets, etc.) for qualifying players
-4. Returns player-season level statistics for filtered situations
-
-In production applications, it's common to generate equivalent SQL on the server side (e.g., in JavaScript) rather than using the dynamic SQL function directly, for better performance and security.
-
-That's what I'm doing for my application but I built this function first as a POC
-
-## CTE Usage Example
-
-Common Table Expressions (CTEs) are used extensively to modularize complex queries, particularly in statistical views:
-
-```sql
-CREATE MATERIALIZED VIEW player_game_stats AS
-WITH playstats_agg AS (
-    -- Aggregate playstats at player-game level
-    SELECT
-        ps.player_id,
-        ps.game_id,
-        -- Aggregations...
-    FROM playstats ps
-    JOIN players pl ON ps.player_id = pl.gsis_id
-    GROUP BY ps.player_id, ps.game_id, ps.season, ps.week, ps.team
-),
-passing_stats AS (
-    -- QB passing-specific metrics
-    SELECT
-        p.passer_player_id AS player_id,
-        -- EPA calculations...
-    FROM plays p
-    WHERE p.play_type IN ('pass', 'qb_spike')
-    GROUP BY p.passer_player_id, p.game_id
-)
-```
-
-This approach allows:
-1. Breaking complex calculations into manageable pieces
-2. Better query optimizer understanding of data relationships
-3. Improved readability and maintainability
-4. Separation of concerns between raw aggregation and calculated metrics
-
-## Setup and Maintenance
-
-The database setup is automated through the `setup_database.sh` script, which:
-1. Creates the database if it doesn't exist
-2. Executes SQL files in the correct order to build the schema
-3. Provides error handling and reporting
-
-Ongoing maintenance is supported through functions like:
-- `refresh_all_materialized_views()`: Refreshes statistical views after data updates
-- `maintain_indexes()`: Identifies and rebuilds bloated indexes
-- `create_playstats_partition()`: Creates new partitions for upcoming seasons
-
-## Performance Optimization
-
-The schema includes multiple layers of performance optimization:
-
-### 1. Storage Optimizations
-
-```sql
--- Optimize core tables for read performance
-ALTER TABLE teams SET (fillfactor = 100, autovacuum_vacuum_scale_factor = 0.4);
-ALTER TABLE players SET (fillfactor = 100, autovacuum_vacuum_scale_factor = 0.4);
-
--- Historical data compression
-ALTER TABLE plays_2019 SET (toast_tuple_target = 8160);
-```
-
-### 2. Statistics Collection Tuning
-
-```sql
--- Increase statistics gathering for frequently filtered columns
-ALTER TABLE plays ALTER COLUMN is_red_zone SET STATISTICS 1000;
-ALTER TABLE plays ALTER COLUMN is_leading SET STATISTICS 1000;
-```
-
-### 3. Clustering Optimizations
-
-```sql
--- Cluster plays table by game_id and play_id
-CREATE INDEX idx_plays_2023_game_play ON plays_2023(game_id, play_id);
-CLUSTER plays_2023 USING idx_plays_2023_game_play;
-```
-
-### 4. Parallel Query Optimization
-
-```sql
--- Enable aggressive parallelism for analytical queries
-CREATE OR REPLACE FUNCTION enable_parallel_analysis() 
-RETURNS VOID AS $$
-BEGIN
-    SET max_parallel_workers_per_gather = 4;
-    SET parallel_tuple_cost = 0.01;
-    SET parallel_setup_cost = 100;
-    SET min_parallel_table_scan_size = '8MB';
-    SET min_parallel_index_scan_size = '512kB';
-END;
-$$ LANGUAGE plpgsql;
-```
-
-### 5. Materialized View Strategy
-
-The use of materialized views for game-level statistics provides significant performance advantages:
-- Pre-computed aggregations for common queries
-- Reduced runtime calculation overhead
-- Efficient refresh cycles during data updates
-
-The view structure uses a two-level approach:
-1. Base materialized view with aggregated statistics
-2. Derived view with calculated metrics
-
-This separation allows efficient refreshing of the base data while keeping derived calculations performant. 
+*   Relational Database Design & Data Modeling (Dimensional Modeling)
+*   Advanced SQL and PostgreSQL Features (Partitioning, Materialized Views, Window Functions, CTEs, PL/pgSQL)
+*   Database Performance Tuning & Optimization
+*   Strategic Indexing (B-Tree, GIN, Partial, Covering Indexes)
+*   Schema Management and Maintainability
+*   Data Warehousing Concepts
